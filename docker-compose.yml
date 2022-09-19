@@ -1,0 +1,102 @@
+version: "3.2"
+services:
+    rabbitmq:
+        image: rabbitmq:3.8-management-alpine
+        container_name: "rabbitmq"
+        environment:
+            - RABBITMQ_DEFAULT_USER=master
+            - RABBITMQ_DEFAULT_PASS=1234dev
+        ports:
+            - 5672:5672
+            - 15672:15672
+        volumes:
+            - ~/.docker/rabbitmq/data/:/var/lib/rabbitmq/
+            - ~/.docker/rabbitmq/log/:/var/log/rabbitmq
+        networks:
+            - server_network
+
+    postgresdb:
+        image: postgres:13-alpine
+        container_name: "postgresdb"
+        restart: always
+        ports:
+            - 5432:5432
+        environment:
+            - POSTGRES_USER=postgres
+            - POSTGRES_PASSWORD=password123
+            - POSTGRES_DB=checkoutdb
+        networks:
+            - server_network
+
+    checkout_service:
+        build:
+            context: .
+            dockerfile: Dockerfile.dev
+        restart: unless-stopped
+        volumes:
+            - ./:/home/app
+        ports:
+            - "8080:8080"
+        depends_on:
+            - rabbitmq
+            - postgresdb
+        networks:
+            - server_network
+
+    grafana:
+        container_name: grafana_container
+        image: grafana/grafana
+        environment:
+            - GF_SECURITY_ADMIN_USER=admin
+            - GF_SECURITY_ADMIN_PASSWORD=password123
+            - GF_USERS_ALLOW_SIGN_UP=false
+        restart: unless-stopped
+        ports:
+            - 3000:3000
+        depends_on:
+            - prometheus
+        networks:
+            - server_network
+
+    prometheus:
+        container_name: prometheus_container
+        image: prom/prometheus
+        volumes:
+            - ./docker/monitoring/prometheus-local.yml:/etc/prometheus/prometheus.yml:Z
+        command:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention=20d"
+            - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+            - "--web.console.templates=/usr/share/prometheus/consoles"
+        ports:
+            - 9090:9090
+        depends_on:
+            - checkout_service
+        networks:
+            - server_network
+
+    jaeger:
+        container_name: "jaeger"
+        image: jaegertracing/all-in-one:1.11
+        ports:
+            - "5775:5775/udp"
+            - "6831:6831/udp"
+            - "6832:6832/udp"
+            - "5778:5778/tcp"
+            - "16686:16686"
+            - "14268:14268"
+            - "9411:9411"
+        restart: on-failure
+        environment:
+            - LOG_LEVEL=debug
+        labels:
+            NAME: "jaeger-agent"
+        depends_on:
+            - checkout_service
+        networks:
+            - server_network
+
+networks:
+    server_network:
+        driver: bridge
